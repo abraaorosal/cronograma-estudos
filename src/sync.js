@@ -1,5 +1,8 @@
 const API = 'https://api.jsonstorage.net/v1/json';
 
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
 const bytesToB64 = (bytes) => {
   let binary = '';
   const chunk = 0x8000;
@@ -16,10 +19,29 @@ const b64ToBytes = (value) => {
   return bytes;
 };
 
+const compress = async (text) => {
+  const plain = encoder.encode(text);
+  if (!('CompressionStream' in globalThis)) return { bytes: plain, compression: 'none' };
+  const stream = new CompressionStream('gzip');
+  const writer = stream.writable.getWriter();
+  await writer.write(plain);
+  await writer.close();
+  return { bytes: new Uint8Array(await new Response(stream.readable).arrayBuffer()), compression: 'gzip' };
+};
+
+const decompress = async (bytes, compression) => {
+  if (compression !== 'gzip' || !('DecompressionStream' in globalThis)) return decoder.decode(bytes);
+  const stream = new DecompressionStream('gzip');
+  const writer = stream.writable.getWriter();
+  await writer.write(bytes);
+  await writer.close();
+  return decoder.decode(await new Response(stream.readable).arrayBuffer());
+};
+
 const deriveKey = async (pin, salt) => {
   const baseKey = await crypto.subtle.importKey(
     'raw',
-    new TextEncoder().encode(pin),
+    encoder.encode(pin),
     { name: 'PBKDF2' },
     false,
     ['deriveKey']
@@ -37,10 +59,11 @@ export const encryptState = async (state, pin) => {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveKey(pin, salt);
-  const plain = new TextEncoder().encode(JSON.stringify(state));
-  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain);
+  const packed = await compress(JSON.stringify(state));
+  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, packed.bytes);
   return {
-    schema: 'oab48-sync-v1',
+    schema: 'oab48-sync-v2',
+    compression: packed.compression,
     salt: bytesToB64(salt),
     iv: bytesToB64(iv),
     data: bytesToB64(new Uint8Array(encrypted)),
@@ -49,14 +72,19 @@ export const encryptState = async (state, pin) => {
 };
 
 export const decryptState = async (payload, pin) => {
-  if (!payload || payload.schema !== 'oab48-sync-v1') throw new Error('Formato de sincronização inválido.');
+  if (!payload || !['oab48-sync-v1', 'oab48-sync-v2'].includes(payload.schema)) {
+    throw new Error('Formato de sincronização inválido.');
+  }
   const salt = b64ToBytes(payload.salt);
   const iv = b64ToBytes(payload.iv);
   const encrypted = b64ToBytes(payload.data);
   const key = await deriveKey(pin, salt);
   try {
-    const decrypted = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encrypted);
-    return JSON.parse(new TextDecoder().decode(decrypted));
+    const decrypted = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encrypted));
+    const json = payload.schema === 'oab48-sync-v1'
+      ? decoder.decode(decrypted)
+      : await decompress(decrypted, payload.compression || 'none');
+    return JSON.parse(json);
   } catch {
     throw new Error('PIN incorreto ou dados de sincronização corrompidos.');
   }

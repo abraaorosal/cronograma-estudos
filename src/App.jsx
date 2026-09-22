@@ -126,9 +126,9 @@ function App() {
 
   const reviewAction = (id,ok) => mutate(prev => ({
     ...prev,
-    reviewQueue: prev.reviewQueue.map(r => r.id !== id ? r : ok
-      ? {...r,done:true,result:'remembered',completedAt:new Date().toISOString()}
-      : {...r,dueDate:addDays(today,2),result:'again',attempts:(r.attempts||0)+1})
+    reviewQueue: ok
+      ? prev.reviewQueue.filter(r => r.id !== id)
+      : prev.reviewQueue.map(r => r.id !== id ? r : {...r,dueDate:addDays(today,2),result:'again',attempts:(r.attempts||0)+1})
   }));
 
   const due = useMemo(() => (state.reviewQueue||[]).filter(r => !r.done && r.dueDate <= today).sort((a,b) => a.dueDate.localeCompare(b.dueDate)),[state.reviewQueue,today]);

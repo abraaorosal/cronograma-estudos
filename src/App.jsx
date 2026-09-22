@@ -112,7 +112,7 @@ function App() {
     blocks[index] = {...(blocks[index]||{}),completed:complete,completedAt:complete?new Date().toISOString():null,minutes:blocks[index]?.minutes || (complete?40:'')};
     const sourceId = date + '-' + index;
     let queue = [...(prev.reviewQueue || [])];
-    if (complete && block) {
+    if (complete && block && !['Misto','Simulado'].includes(block.subject)) {
       const ids = new Set(queue.map(r => r.id));
       reviewIntervals.forEach(interval => {
         const id = sourceId + '-d' + interval;
